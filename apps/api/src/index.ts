@@ -11,14 +11,8 @@ const port = process.env["PORT"] ?? 3001;
 app.use(cors({ origin: process.env["CORS_ORIGIN"] ?? "http://localhost:3000" }));
 app.use(morgan("dev"));
 
-// Raw body needed for svix webhook signature verification
-app.use("/webhooks", express.raw({ type: "application/json" }), (req, _res, next) => {
-  if (Buffer.isBuffer(req.body)) {
-    req.body = JSON.parse(req.body.toString());
-  }
-  next();
-});
-
+// Webhook routes need the raw body for svix signature verification
+app.use("/webhooks", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(clerkAuth);
 

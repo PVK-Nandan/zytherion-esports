@@ -1,8 +1,9 @@
 import { getAuth } from "@clerk/express";
 import { NextFunction, Request, Response } from "express";
 import { prisma } from "../lib/prisma";
+import { asyncHandler } from "../lib/async-handler";
 
-export async function banCheck(req: Request, res: Response, next: NextFunction) {
+export const banCheck = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { userId } = getAuth(req);
   if (!userId) {
     next();
@@ -20,4 +21,4 @@ export async function banCheck(req: Request, res: Response, next: NextFunction) 
   }
 
   next();
-}
+});
