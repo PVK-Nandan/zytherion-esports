@@ -6,3 +6,55 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum KycStatus {
+  pending
+  approved
+  rejected
+}
+
+enum BgmiTier {
+  bronze
+  silver
+  gold
+  platinum
+  diamond
+  crown
+  ace
+  conqueror
+}
+
+model User {
+  id        String    @id // Clerk user ID (user_xxx)
+  email     String    @unique
+  username  String    @unique
+  isBanned  Boolean   @default(false)
+  kycStatus KycStatus @default(pending)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  profile Profile?
+  wallet  Wallet?
+}
+
+model Profile {
+  id        String    @id @default(cuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bgmiUid   String?
+  bgmiIgn   String?
+  bgmiTier  BgmiTier?
+  bio       String?
+  avatarUrl String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
