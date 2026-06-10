@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd ../.. && pnpm install --frozen-lockfile && pnpm --filter api build"
+buildCommand = "cd ../.. && npm install -g pnpm@9 && pnpm install --frozen-lockfile && pnpm --filter api build"
 
 [deploy]
 startCommand = "npx prisma migrate deploy && node dist/index.js"
