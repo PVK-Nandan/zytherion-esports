@@ -1,5 +1,7 @@
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
+
+const deliberateLintError = "CI gate test — this unused variable should fail CI";
 import morgan from "morgan";
 
 const app = express();
