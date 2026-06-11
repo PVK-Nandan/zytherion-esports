@@ -62,13 +62,42 @@ model Profile {
   updatedAt DateTime  @updatedAt
 }
 
+enum TransactionType {
+  credit
+  debit
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  failed
+}
+
 model Wallet {
-  id        String   @id @default(cuid())
-  userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  balance   Decimal  @default(0) @db.Decimal(12, 2)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String              @id @default(cuid())
+  userId       String              @unique
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id                String            @id @default(cuid())
+  walletId          String
+  wallet            Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type              TransactionType
+  amountPaise       Int
+  status            TransactionStatus @default(pending)
+  idempotencyKey    String            @unique
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpayPayoutId  String?
+  description       String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([walletId, createdAt(sort: Desc)])
 }
 
 enum NotificationType {
