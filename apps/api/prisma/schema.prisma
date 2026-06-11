@@ -24,6 +24,13 @@ enum BgmiTier {
   conqueror
 }
 
+enum InvitationStatus {
+  pending
+  accepted
+  declined
+  expired
+}
+
 model User {
   id        String    @id // Clerk user ID (user_xxx)
   email     String    @unique
@@ -33,8 +40,13 @@ model User {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  profile Profile?
-  wallet  Wallet?
+  profile             Profile?
+  wallet              Wallet?
+  notifications       Notification[]
+  ownedTeams          Team[]           @relation("OwnedTeams")
+  teamMemberships     TeamMember[]     @relation("TeamMemberships")
+  receivedInvitations TeamInvitation[] @relation("ReceivedInvitations")
+  sentInvitations     TeamInvitation[] @relation("SentInvitations")
 }
 
 model Profile {
@@ -57,4 +69,76 @@ model Wallet {
   balance   Decimal  @default(0) @db.Decimal(12, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum NotificationType {
+  team_invitation_received
+  tournament_registration_confirmed
+  match_result_submitted
+  match_result_approved
+  match_result_disputed
+  wallet_deposit_completed
+  wallet_withdrawal_completed
+  wallet_withdrawal_failed
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  metadata  Json             @default("{}")
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read, createdAt(sort: Desc)])
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  logoUrl     String?
+  ownerId     String
+  owner       User     @relation("OwnedTeams", fields: [ownerId], references: [id])
+  maxMembers  Int      @default(6)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     TeamMember[]
+  invitations TeamInvitation[]
+
+  @@index([slug])
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation("TeamMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model TeamInvitation {
+  id        String           @id @default(cuid())
+  teamId    String
+  team      Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  invitedId String
+  invited   User             @relation("ReceivedInvitations", fields: [invitedId], references: [id], onDelete: Cascade)
+  invitedBy String
+  inviter   User             @relation("SentInvitations", fields: [invitedBy], references: [id])
+  status    InvitationStatus @default(pending)
+  expiresAt DateTime
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([invitedId, status])
+  @@index([teamId, invitedId, status])
 }
