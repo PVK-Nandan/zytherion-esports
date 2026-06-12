@@ -8,6 +8,7 @@ import notificationRouter from "./routes/notifications";
 import teamRouter from "./routes/teams";
 import invitationRouter from "./routes/invitations";
 import walletRouter from "./routes/wallets";
+import tournamentRouter from "./routes/tournaments";
 
 const app = express();
 const port = process.env["PORT"] ?? 3001;
@@ -30,6 +31,7 @@ app.use("/notifications", notificationRouter);
 app.use("/teams", teamRouter);
 app.use("/invitations", invitationRouter);
 app.use("/wallets", walletRouter);
+app.use("/tournaments", tournamentRouter);
 
 app.use((err: Error & { status?: number; statusCode?: number }, _req: Request, res: Response, _next: NextFunction) => {
   const status = err.status ?? err.statusCode ?? 500;
