@@ -70,6 +70,7 @@ model Profile {
 enum TransactionType {
   credit
   debit
+  prize_credit
 }
 
 enum TransactionStatus {
@@ -149,6 +150,7 @@ model Team {
   matchesAsTeam2        TournamentMatch[]        @relation("MatchTeam2")
   matchesWon            TournamentMatch[]        @relation("MatchWinner")
   matchResultsSubmitted MatchResult[]            @relation("ResultWinnerTeam")
+  leaderboardEntries    LeaderboardEntry[]
 
   @@index([slug])
 }
@@ -230,6 +232,7 @@ model Tournament {
   maxTeams        Int
   entryFeePaise   Int              @default(0)
   prizePoolPaise  Int              @default(0)
+  prizeDistribution Json?
   organizerId     String
   organizer       User             @relation("OrganizedTournaments", fields: [organizerId], references: [id])
   scheduledAt     DateTime?
@@ -238,8 +241,11 @@ model Tournament {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
+  pointsConfig    Json             @default("{}")
+
   registrations   TournamentRegistration[]
   matches         TournamentMatch[]
+  leaderboard     LeaderboardEntry[]
 
   @@index([status])
   @@index([format])
@@ -300,6 +306,8 @@ model MatchResult {
   submitter    User              @relation("SubmittedResults", fields: [submittedBy], references: [id])
   winnerTeamId String
   winnerTeam   Team              @relation("ResultWinnerTeam", fields: [winnerTeamId], references: [id])
+  winnerKills  Int               @default(0)
+  loserKills   Int               @default(0)
   status       MatchResultStatus @default(pending_review)
   adminNotes   String?
   reviewedBy   String?
@@ -322,4 +330,35 @@ model MatchScreenshot {
   createdAt          DateTime    @default(now())
 
   @@index([matchResultId])
+}
+
+model LeaderboardEntry {
+  id            String     @id @default(cuid())
+  tournamentId  String
+  tournament    Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  teamId        String
+  team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  points        Int        @default(0)
+  kills         Int        @default(0)
+  matchesPlayed Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([tournamentId, teamId])
+  @@index([tournamentId, points(sort: Desc)])
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  action     String
+  entityType String
+  entityId   String
+  notes      String?
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([createdAt(sort: Desc)])
 }
