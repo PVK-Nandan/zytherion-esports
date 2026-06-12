@@ -5,12 +5,10 @@ import { asyncHandler } from "../lib/async-handler";
 import { requireAuth } from "../middleware/auth";
 import { requireAdmin } from "../middleware/admin";
 import { notifications } from "../services/notifications";
+import { upsertLeaderboardOnApproval } from "../services/leaderboard";
+import { distributePrizes } from "../services/prize-distribution";
 
 const router = Router();
-
-function paiseToInr(paise: number): string {
-  return (paise / 100).toFixed(2);
-}
 
 // PATCH /match-results/:id/review — admin approve, reject, or dispute a result
 router.patch(
@@ -33,7 +31,7 @@ router.patch(
       include: {
         match: {
           include: {
-            tournament: { select: { id: true, title: true, prizePoolPaise: true } },
+            tournament: { select: { id: true, title: true, prizePoolPaise: true, pointsConfig: true } },
             team1: {
               select: {
                 id: true,
@@ -94,43 +92,30 @@ router.patch(
           data: { winnerId: matchResult.winnerTeamId, status: "completed" },
         });
 
-        // Prize distribution — credit winning team members
-        const prizePool = match.tournament.prizePoolPaise;
-        if (prizePool > 0) {
-          const winningMembers = allMembers.filter((m) => m.teamId === matchResult.winnerTeamId);
-          if (winningMembers.length > 0) {
-            const prizePerMember = Math.floor(prizePool / winningMembers.length);
+        // Prize distribution — idempotent, position-aware credits via prize-distribution service
+        const loserTeamId = matchResult.winnerTeamId === team1?.id ? team2?.id : team1?.id;
+        if (loserTeamId) {
+          await distributePrizes(match.id, matchResult.winnerTeamId, loserTeamId, tx);
+        }
 
-            for (const member of winningMembers) {
-              const wallet = await tx.wallet.findUnique({ where: { userId: member.userId } });
-              if (!wallet) continue;
-
-              await tx.walletTransaction.create({
-                data: {
-                  walletId: wallet.id,
-                  type: "credit",
-                  amountPaise: prizePerMember,
-                  status: "completed",
-                  idempotencyKey: `prize:${resultId}:${member.userId}`,
-                  description: `Prize for winning match in ${match.tournament.title}`,
-                },
-              });
-            }
-          }
+        // Upsert leaderboard entries for both teams
+        if (loserTeamId) {
+          await upsertLeaderboardOnApproval(tx, {
+            tournamentId: match.tournament.id,
+            winnerTeamId: matchResult.winnerTeamId,
+            loserTeamId,
+            winnerKills: matchResult.winnerKills,
+            loserKills: matchResult.loserKills,
+            pointsConfig: match.tournament.pointsConfig,
+          });
         }
       });
 
-      // Notify both teams
-      const prizePool = match.tournament.prizePoolPaise;
-      const winningMembers = allMembers.filter((m) => m.teamId === matchResult.winnerTeamId);
-      const prizePerMember = prizePool > 0 && winningMembers.length > 0
-        ? paiseToInr(Math.floor(prizePool / winningMembers.length))
-        : undefined;
-
+      // Notify both teams (prize amounts are visible in wallet transactions)
       for (const member of allMembers) {
         const won = member.teamId === matchResult.winnerTeamId;
         notifications
-          .matchResultApproved(member.userId, match.id, won, won ? prizePerMember : undefined)
+          .matchResultApproved(member.userId, match.id, won, undefined)
           .catch((err) => console.error("[match-results] approval notification failed:", err));
       }
 

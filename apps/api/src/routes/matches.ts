@@ -94,6 +94,8 @@ router.post(
       winnerTeamId?: string;
       cloudinaryUrl?: string;
       cloudinaryPublicId?: string;
+      winnerKills?: unknown;
+      loserKills?: unknown;
     };
 
     const { winnerTeamId, cloudinaryUrl, cloudinaryPublicId } = body;
@@ -102,6 +104,9 @@ router.post(
       res.status(400).json({ error: "winnerTeamId, cloudinaryUrl, and cloudinaryPublicId are required" });
       return;
     }
+
+    const winnerKills = Math.max(0, Number(body.winnerKills ?? 0));
+    const loserKills = Math.max(0, Number(body.loserKills ?? 0));
 
     // Validate cloudinary public_id is in our expected folder
     const expectedFolder = `${SCREENSHOT_FOLDER}/match-${matchId}`;
@@ -170,6 +175,8 @@ router.post(
           matchId,
           submittedBy: userId!,
           winnerTeamId,
+          winnerKills,
+          loserKills,
           status: "pending_review",
           screenshots: {
             create: { cloudinaryUrl, cloudinaryPublicId },

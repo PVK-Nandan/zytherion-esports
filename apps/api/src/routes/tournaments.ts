@@ -6,6 +6,7 @@ import { requireAuth } from "../middleware/auth";
 import { banCheck } from "../middleware/ban-check";
 import { asyncHandler } from "../lib/async-handler";
 import { notifications } from "../services/notifications";
+import { upsertLeaderboardOnApproval } from "../services/leaderboard";
 
 const router = Router();
 
@@ -49,6 +50,7 @@ const tournamentPublicSelect = {
   maxTeams: true,
   entryFeePaise: true,
   prizePoolPaise: true,
+  prizeDistribution: true,
   scheduledAt: true,
   registrationDeadline: true,
   cancellationWindowHours: true,
@@ -750,12 +752,17 @@ router.post(
     const body = req.body as {
       winnerTeamId?: string;
       screenshots?: { url: string; publicId: string }[];
+      winnerKills?: unknown;
+      loserKills?: unknown;
     };
 
     if (!body.winnerTeamId) {
       res.status(400).json({ error: "winnerTeamId is required" });
       return;
     }
+
+    const winnerKills = Math.max(0, Number(body.winnerKills ?? 0));
+    const loserKills = Math.max(0, Number(body.loserKills ?? 0));
 
     const match = await prisma.tournamentMatch.findUnique({
       where: { id: matchId },
@@ -810,6 +817,8 @@ router.post(
         matchId,
         submittedBy: userId!,
         winnerTeamId: body.winnerTeamId,
+        winnerKills,
+        loserKills,
         status: "pending_review",
         ...screenshotData,
       },
@@ -879,16 +888,32 @@ router.post(
 
     const prizePoolPaise = tournament.prizePoolPaise;
 
-    const [approvedResult] = await prisma.$transaction([
-      prisma.matchResult.update({
+    const approvedResult = await prisma.$transaction(async (tx) => {
+      const result = await tx.matchResult.update({
         where: { id: pendingResult.id },
         data: { status: "approved", reviewedBy: userId!, reviewedAt: new Date(), adminNotes: body.adminNotes ?? null },
-      }),
-      prisma.tournamentMatch.update({
+      });
+
+      await tx.tournamentMatch.update({
         where: { id: matchId },
         data: { winnerId: pendingResult.winnerTeamId, status: MatchStatus.completed },
-      }),
-    ]);
+      });
+
+      // Upsert leaderboard for both match participants
+      const loserTeamId = pendingResult.winnerTeamId === match.team1Id ? match.team2Id : match.team1Id;
+      if (loserTeamId) {
+        await upsertLeaderboardOnApproval(tx, {
+          tournamentId,
+          winnerTeamId: pendingResult.winnerTeamId,
+          loserTeamId,
+          winnerKills: pendingResult.winnerKills,
+          loserKills: pendingResult.loserKills,
+          pointsConfig: tournament.pointsConfig,
+        });
+      }
+
+      return result;
+    });
 
     // Advance winner to next match slot if bracket continues
     if (match.nextMatchId) {
@@ -979,6 +1004,45 @@ router.post(
     );
 
     res.json(disputed);
+  })
+);
+
+// GET /tournaments/:id/leaderboard — public ranked standings for a tournament
+router.get(
+  "/:id/leaderboard",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tournamentId = req.params["id"] as string;
+
+    const tournament = await prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { id: true },
+    });
+    if (!tournament) {
+      res.status(404).json({ error: "Tournament not found" });
+      return;
+    }
+
+    const entries = await prisma.leaderboardEntry.findMany({
+      where: { tournamentId },
+      orderBy: [{ points: "desc" }, { kills: "desc" }],
+      select: {
+        teamId: true,
+        points: true,
+        kills: true,
+        matchesPlayed: true,
+        team: { select: { id: true, name: true, slug: true, logoUrl: true } },
+      },
+    });
+
+    const ranked = entries.map((entry, idx) => ({
+      rank: idx + 1,
+      team: entry.team,
+      points: entry.points,
+      kills: entry.kills,
+      matchesPlayed: entry.matchesPlayed,
+    }));
+
+    res.json({ tournamentId, entries: ranked });
   })
 );
 
