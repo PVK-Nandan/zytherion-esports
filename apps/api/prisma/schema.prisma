@@ -36,6 +36,7 @@ model User {
   email     String    @unique
   username  String    @unique
   isBanned  Boolean   @default(false)
+  isAdmin   Boolean   @default(false)
   kycStatus KycStatus @default(pending)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -49,6 +50,8 @@ model User {
   sentInvitations          TeamInvitation[]         @relation("SentInvitations")
   organizedTournaments     Tournament[]             @relation("OrganizedTournaments")
   tournamentRegistrations  TournamentRegistration[] @relation("TournamentRegistrations")
+  submittedMatchResults    MatchResult[]            @relation("SubmittedResults")
+  reviewedMatchResults     MatchResult[]            @relation("ReviewedResults")
 }
 
 model Profile {
@@ -145,6 +148,7 @@ model Team {
   matchesAsTeam1        TournamentMatch[]        @relation("MatchTeam1")
   matchesAsTeam2        TournamentMatch[]        @relation("MatchTeam2")
   matchesWon            TournamentMatch[]        @relation("MatchWinner")
+  matchResultsSubmitted MatchResult[]            @relation("ResultWinnerTeam")
 
   @@index([slug])
 }
@@ -202,7 +206,15 @@ enum MatchStatus {
   pending
   in_progress
   completed
+  disputed
   bye
+}
+
+enum MatchResultStatus {
+  pending_review
+  approved
+  rejected
+  disputed
 }
 
 model Tournament {
@@ -274,6 +286,40 @@ model TournamentMatch {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  results      MatchResult[]
+
   @@unique([tournamentId, round, matchNumber])
   @@index([tournamentId, round])
+}
+
+model MatchResult {
+  id           String            @id @default(cuid())
+  matchId      String
+  match        TournamentMatch   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  submittedBy  String
+  submitter    User              @relation("SubmittedResults", fields: [submittedBy], references: [id])
+  winnerTeamId String
+  winnerTeam   Team              @relation("ResultWinnerTeam", fields: [winnerTeamId], references: [id])
+  status       MatchResultStatus @default(pending_review)
+  adminNotes   String?
+  reviewedBy   String?
+  reviewer     User?             @relation("ReviewedResults", fields: [reviewedBy], references: [id])
+  reviewedAt   DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  screenshots  MatchScreenshot[]
+
+  @@index([matchId, status])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+model MatchScreenshot {
+  id                 String      @id @default(cuid())
+  matchResultId      String
+  matchResult        MatchResult @relation(fields: [matchResultId], references: [id], onDelete: Cascade)
+  cloudinaryUrl      String
+  cloudinaryPublicId String
+  createdAt          DateTime    @default(now())
+
+  @@index([matchResultId])
 }
