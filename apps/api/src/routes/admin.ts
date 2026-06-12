@@ -6,6 +6,7 @@ import { asyncHandler } from "../lib/async-handler";
 import { requireAuth } from "../middleware/auth";
 import { requireAdmin } from "../middleware/admin";
 import { notifications } from "../services/notifications";
+import { distributePrizes } from "../services/prize-distribution";
 
 const router = Router();
 
@@ -233,7 +234,7 @@ router.get(
       where["walletId"] = wallet.id;
     }
 
-    if (type && ["credit", "debit"].includes(type)) where["type"] = type;
+    if (type && ["credit", "debit", "prize_credit"].includes(type)) where["type"] = type;
     if (status && ["pending", "completed", "failed"].includes(status)) where["status"] = status;
 
     if (from || to) {
@@ -497,6 +498,8 @@ router.patch(
     ];
 
     if (decision === "approved") {
+      const loserTeamId = matchResult.winnerTeamId === match.team1?.id ? match.team2?.id : match.team1?.id;
+
       await prisma.$transaction(async (tx) => {
         await tx.matchResult.update({
           where: { id: resultId },
@@ -507,26 +510,8 @@ router.patch(
           data: { winnerId: matchResult.winnerTeamId, status: "completed" },
         });
 
-        const prizePool = match.tournament.prizePoolPaise;
-        if (prizePool > 0) {
-          const winningMembers = allMembers.filter((m) => m.teamId === matchResult.winnerTeamId);
-          if (winningMembers.length > 0) {
-            const prizePerMember = Math.floor(prizePool / winningMembers.length);
-            for (const member of winningMembers) {
-              const wallet = await tx.wallet.findUnique({ where: { userId: member.userId } });
-              if (!wallet) continue;
-              await tx.walletTransaction.create({
-                data: {
-                  walletId: wallet.id,
-                  type: "credit",
-                  amountPaise: prizePerMember,
-                  status: "completed",
-                  idempotencyKey: `prize:${resultId}:${member.userId}`,
-                  description: `Prize for winning match in ${match.tournament.title}`,
-                },
-              });
-            }
-          }
+        if (loserTeamId) {
+          await distributePrizes(match.id, matchResult.winnerTeamId, loserTeamId, tx);
         }
       });
 
@@ -541,17 +526,10 @@ router.patch(
         }
       }
 
-      const prizePool = match.tournament.prizePoolPaise;
-      const winningMembers = allMembers.filter((m) => m.teamId === matchResult.winnerTeamId);
-      const prizePerMember =
-        prizePool > 0 && winningMembers.length > 0
-          ? paiseToInr(Math.floor(prizePool / winningMembers.length))
-          : undefined;
-
       for (const member of allMembers) {
         const won = member.teamId === matchResult.winnerTeamId;
         notifications
-          .matchResultApproved(member.userId, match.id, won, won ? prizePerMember : undefined)
+          .matchResultApproved(member.userId, match.id, won, undefined)
           .catch((err) => console.error("[admin] matchResultApproved notification failed:", err));
       }
 
@@ -637,6 +615,8 @@ router.patch(
       ...(match.team2?.members ?? []).map((m) => ({ ...m, teamId: match.team2!.id })),
     ];
 
+    const reassignLoserTeamId = body.winnerTeamId === match.team1Id ? match.team2Id : match.team1Id;
+
     await prisma.$transaction(async (tx) => {
       await tx.matchResult.update({
         where: { id: resultId },
@@ -653,26 +633,8 @@ router.patch(
         data: { winnerId: body.winnerTeamId!, status: "completed" },
       });
 
-      const prizePool = match.tournament.prizePoolPaise;
-      if (prizePool > 0) {
-        const winningMembers = allMembers.filter((m) => m.teamId === body.winnerTeamId);
-        if (winningMembers.length > 0) {
-          const prizePerMember = Math.floor(prizePool / winningMembers.length);
-          for (const member of winningMembers) {
-            const wallet = await tx.wallet.findUnique({ where: { userId: member.userId } });
-            if (!wallet) continue;
-            await tx.walletTransaction.create({
-              data: {
-                walletId: wallet.id,
-                type: "credit",
-                amountPaise: prizePerMember,
-                status: "completed",
-                idempotencyKey: `prize:reassign:${resultId}:${member.userId}`,
-                description: `Prize (dispute resolved) for match in ${match.tournament.title}`,
-              },
-            });
-          }
-        }
+      if (reassignLoserTeamId) {
+        await distributePrizes(match.id, body.winnerTeamId!, reassignLoserTeamId, tx);
       }
     });
 
@@ -688,17 +650,10 @@ router.patch(
     }
 
     // Notify participants of the resolution
-    const prizePool = match.tournament.prizePoolPaise;
-    const winningMembers = allMembers.filter((m) => m.teamId === body.winnerTeamId);
-    const prizePerMember =
-      prizePool > 0 && winningMembers.length > 0
-        ? paiseToInr(Math.floor(prizePool / winningMembers.length))
-        : undefined;
-
     for (const member of allMembers) {
       const won = member.teamId === body.winnerTeamId;
       notifications
-        .matchResultApproved(member.userId, match.id, won, won ? prizePerMember : undefined)
+        .matchResultApproved(member.userId, match.id, won, undefined)
         .catch((err) => console.error("[admin] reassign winner notification failed:", err));
     }
 
@@ -713,6 +668,48 @@ router.patch(
 
     const updated = await prisma.matchResult.findUnique({ where: { id: resultId }, include: { screenshots: true } });
     res.json(updated);
+  }),
+);
+
+// GET /admin/tournaments/entry-fee-gaps — tournaments where collected fees < prize pool
+router.get(
+  "/tournaments/entry-fee-gaps",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const tournaments = await prisma.tournament.findMany({
+      where: { prizePoolPaise: { gt: 0 }, status: { notIn: ["cancelled", "completed"] } },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        status: true,
+        prizePoolPaise: true,
+        registrations: {
+          where: { withdrawn: false },
+          select: { entryFeePaise: true },
+        },
+      },
+    });
+
+    const gaps = tournaments
+      .map((t) => {
+        const totalCollected = t.registrations.reduce((sum, r) => sum + r.entryFeePaise, 0);
+        const shortfall = t.prizePoolPaise - totalCollected;
+        return {
+          id: t.id,
+          title: t.title,
+          slug: t.slug,
+          status: t.status,
+          prizePoolPaise: t.prizePoolPaise,
+          prizePoolInr: paiseToInr(t.prizePoolPaise),
+          totalCollectedPaise: totalCollected,
+          totalCollectedInr: paiseToInr(totalCollected),
+          shortfallPaise: shortfall,
+          shortfallInr: paiseToInr(shortfall),
+        };
+      })
+      .filter((t) => t.shortfallPaise > 0);
+
+    res.json({ data: gaps, count: gaps.length });
   }),
 );
 

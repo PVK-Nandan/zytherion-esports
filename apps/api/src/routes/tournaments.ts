@@ -1,5 +1,5 @@
 import { getAuth } from "@clerk/express";
-import { TransactionType, TournamentStatus, MatchStatus } from "@prisma/client";
+import { Prisma, TransactionType, TournamentStatus, MatchStatus } from "@prisma/client";
 import { Router, Request, Response } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
@@ -79,6 +79,7 @@ router.post(
       maxTeams?: unknown;
       entryFeePaise?: unknown;
       prizePoolPaise?: unknown;
+      prizeDistribution?: Record<string, number>;
       scheduledAt?: string;
       registrationDeadline?: string;
     };
@@ -138,6 +139,7 @@ router.post(
           maxTeams,
           entryFeePaise,
           prizePoolPaise,
+          ...(body.prizeDistribution !== undefined && body.prizeDistribution !== null && { prizeDistribution: body.prizeDistribution }),
           organizerId: userId!,
           scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
           registrationDeadline: body.registrationDeadline ? new Date(body.registrationDeadline) : null,
@@ -254,6 +256,7 @@ router.patch(
       scheduledAt?: string | null;
       registrationDeadline?: string | null;
       prizePoolPaise?: unknown;
+      prizeDistribution?: Record<string, number> | null;
       advanceStatus?: boolean;
     };
 
@@ -264,6 +267,26 @@ router.patch(
         res.status(422).json({ error: "Tournament cannot be advanced further" });
         return;
       }
+
+      // When starting the tournament, validate entry fees cover the prize pool
+      if (next === "in_progress" && tournament.prizePoolPaise > 0) {
+        const feeAgg = await prisma.tournamentRegistration.aggregate({
+          where: { tournamentId, withdrawn: false },
+          _sum: { entryFeePaise: true },
+        });
+        const totalCollected = feeAgg._sum.entryFeePaise ?? 0;
+        if (totalCollected < tournament.prizePoolPaise) {
+          const gap = tournament.prizePoolPaise - totalCollected;
+          res.status(422).json({
+            error: `Entry fees collected (₹${paiseToInr(totalCollected)}) are less than the prize pool (₹${paiseToInr(tournament.prizePoolPaise)}). Fund the shortfall of ₹${paiseToInr(gap)} from the organizer wallet before starting.`,
+            totalCollectedPaise: totalCollected,
+            prizePoolPaise: tournament.prizePoolPaise,
+            shortfallPaise: gap,
+          });
+          return;
+        }
+      }
+
       const updated = await prisma.tournament.update({
         where: { id: tournamentId },
         data: { status: next },
@@ -285,6 +308,9 @@ router.patch(
           registrationDeadline: body.registrationDeadline ? new Date(body.registrationDeadline) : null,
         }),
         ...(body.prizePoolPaise !== undefined && { prizePoolPaise: Number(body.prizePoolPaise) }),
+        ...(body.prizeDistribution !== undefined && {
+          prizeDistribution: body.prizeDistribution === null ? Prisma.DbNull : body.prizeDistribution,
+        }),
       },
       select: tournamentPublicSelect,
     });
