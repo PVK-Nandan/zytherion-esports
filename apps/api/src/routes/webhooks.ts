@@ -3,6 +3,11 @@ import { Router, Request, Response } from "express";
 import { Webhook } from "svix";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../lib/async-handler";
+import { notifications } from "../services/notifications";
+
+function paiseToInr(paise: number): string {
+  return (paise / 100).toFixed(2);
+}
 
 const router = Router();
 
@@ -175,7 +180,7 @@ router.post(
       }
 
       // Update the pending deposit transaction → completed (idempotent: skip if already set)
-      await prisma.walletTransaction.updateMany({
+      const updateResult = await prisma.walletTransaction.updateMany({
         where: {
           razorpayOrderId: payment.order_id,
           status: "pending",
@@ -186,6 +191,18 @@ router.post(
           razorpayPaymentId: payment.id,
         },
       });
+
+      if (updateResult.count > 0) {
+        const tx = await prisma.walletTransaction.findFirst({
+          where: { razorpayOrderId: payment.order_id },
+          include: { wallet: { select: { userId: true } } },
+        });
+        if (tx?.wallet.userId) {
+          notifications.walletDeposit(tx.wallet.userId, paiseToInr(payment.amount)).catch(
+            (err) => console.error("[notifications] walletDeposit failed:", err),
+          );
+        }
+      }
     } else if (event.event === "payout.processed") {
       const payout = event.payload.payout?.entity;
       if (!payout) {
@@ -193,13 +210,25 @@ router.post(
         return;
       }
 
-      await prisma.walletTransaction.updateMany({
+      const updateResult = await prisma.walletTransaction.updateMany({
         where: {
           razorpayPayoutId: payout.id,
           status: "pending",
         },
         data: { status: "completed" },
       });
+
+      if (updateResult.count > 0) {
+        const tx = await prisma.walletTransaction.findFirst({
+          where: { razorpayPayoutId: payout.id },
+          include: { wallet: { select: { userId: true } } },
+        });
+        if (tx?.wallet.userId) {
+          notifications.walletWithdrawalCompleted(tx.wallet.userId, paiseToInr(payout.amount)).catch(
+            (err) => console.error("[notifications] walletWithdrawalCompleted failed:", err),
+          );
+        }
+      }
     } else if (event.event === "payout.failed") {
       const payout = event.payload.payout?.entity;
       if (!payout) {
@@ -207,12 +236,19 @@ router.post(
         return;
       }
 
+      let failedUserId: string | null = null;
+      let failedAmountPaise = 0;
+
       await prisma.$transaction(async (tx) => {
         // Mark the withdrawal as failed
         const updated = await tx.walletTransaction.findFirst({
           where: { razorpayPayoutId: payout.id },
+          include: { wallet: { select: { userId: true } } },
         });
         if (!updated) return;
+
+        failedUserId = updated.wallet.userId;
+        failedAmountPaise = updated.amountPaise;
 
         await tx.walletTransaction.update({
           where: { id: updated.id },
@@ -234,6 +270,12 @@ router.post(
           },
         });
       });
+
+      if (failedUserId) {
+        notifications.walletWithdrawalFailed(failedUserId, paiseToInr(failedAmountPaise)).catch(
+          (err) => console.error("[notifications] walletWithdrawalFailed failed:", err),
+        );
+      }
     }
 
     res.json({ received: true });

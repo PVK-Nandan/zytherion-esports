@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { banCheck } from "../middleware/ban-check";
 import { asyncHandler } from "../lib/async-handler";
+import { notifications } from "../services/notifications";
 
 const router = Router();
 
@@ -305,6 +306,10 @@ router.post(
         invited: { select: { username: true } },
       },
     });
+
+    notifications.teamInvitation(invitee.id, team.name, teamId).catch(
+      (err) => console.error("[notifications] teamInvitation failed:", err),
+    );
 
     res.status(201).json(invitation);
   })

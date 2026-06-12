@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { banCheck } from "../middleware/ban-check";
 import { asyncHandler } from "../lib/async-handler";
+import { notifications } from "../services/notifications";
 
 const router = Router();
 
@@ -456,6 +457,10 @@ router.post(
       });
     });
 
+    notifications.tournamentRegistered(userId!, tournament.title, tournamentId).catch(
+      (err) => console.error("[notifications] tournamentRegistered failed:", err),
+    );
+
     res.status(201).json(registration);
   })
 );
@@ -720,6 +725,260 @@ router.get(
     }
 
     res.json({ tournamentId, rounds });
+  })
+);
+
+// ─── Match Results ────────────────────────────────────────────────────────────
+
+async function getTeamMemberIds(teamId: string): Promise<string[]> {
+  const members = await prisma.teamMember.findMany({
+    where: { teamId },
+    select: { userId: true },
+  });
+  return members.map((m) => m.userId);
+}
+
+// POST /tournaments/:id/matches/:matchId/result — submit match result
+router.post(
+  "/:id/matches/:matchId/result",
+  requireAuth,
+  banCheck,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    const tournamentId = req.params["id"] as string;
+    const matchId = req.params["matchId"] as string;
+    const body = req.body as {
+      winnerTeamId?: string;
+      screenshots?: { url: string; publicId: string }[];
+    };
+
+    if (!body.winnerTeamId) {
+      res.status(400).json({ error: "winnerTeamId is required" });
+      return;
+    }
+
+    const match = await prisma.tournamentMatch.findUnique({
+      where: { id: matchId },
+      include: {
+        team1: { include: { members: { select: { userId: true } } } },
+        team2: { include: { members: { select: { userId: true } } } },
+      },
+    });
+
+    if (!match || match.tournamentId !== tournamentId) {
+      res.status(404).json({ error: "Match not found" });
+      return;
+    }
+    if (match.status === MatchStatus.completed || match.status === MatchStatus.bye) {
+      res.status(422).json({ error: "Match result already finalised" });
+      return;
+    }
+    if (!match.team1Id || !match.team2Id) {
+      res.status(422).json({ error: "Match does not have two teams yet" });
+      return;
+    }
+
+    // Requester must be a member of one of the teams
+    const team1MemberIds = (match.team1?.members ?? []).map((m) => m.userId);
+    const team2MemberIds = (match.team2?.members ?? []).map((m) => m.userId);
+    const isParticipant = team1MemberIds.includes(userId!) || team2MemberIds.includes(userId!);
+    if (!isParticipant) {
+      res.status(403).json({ error: "You are not a participant in this match" });
+      return;
+    }
+
+    if (body.winnerTeamId !== match.team1Id && body.winnerTeamId !== match.team2Id) {
+      res.status(400).json({ error: "winnerTeamId must be one of the match teams" });
+      return;
+    }
+
+    // Only one active result per match
+    const existing = await prisma.matchResult.findFirst({
+      where: { matchId, status: { in: ["pending_review", "disputed"] } },
+    });
+    if (existing) {
+      res.status(409).json({ error: "A result is already pending review or disputed for this match" });
+      return;
+    }
+
+    const screenshotData = body.screenshots?.length
+      ? { create: body.screenshots.map((s) => ({ cloudinaryUrl: s.url, cloudinaryPublicId: s.publicId })) }
+      : {};
+
+    const result = await prisma.matchResult.create({
+      data: {
+        matchId,
+        submittedBy: userId!,
+        winnerTeamId: body.winnerTeamId,
+        status: "pending_review",
+        ...screenshotData,
+      },
+      include: { screenshots: true },
+    });
+
+    // Notify opposing team members that a result was submitted
+    const submittingTeamId = team1MemberIds.includes(userId!) ? match.team1Id : match.team2Id;
+    const opposingTeamId = submittingTeamId === match.team1Id ? match.team2Id : match.team1Id;
+    const opposingTeamName =
+      submittingTeamId === match.team1Id ? match.team2?.name ?? "opponent" : match.team1?.name ?? "opponent";
+    const submittingTeamName =
+      submittingTeamId === match.team1Id ? match.team1?.name ?? "your team" : match.team2?.name ?? "your team";
+
+    const opposingMemberIds = await getTeamMemberIds(opposingTeamId!);
+    await Promise.allSettled(
+      opposingMemberIds.map((uid) =>
+        notifications.matchResultSubmitted(uid, matchId, submittingTeamName).catch(
+          (err) => console.error("[notifications] matchResultSubmitted failed:", err),
+        ),
+      ),
+    );
+
+    res.status(201).json(result);
+  })
+);
+
+// POST /tournaments/:id/matches/:matchId/result/approve — organizer approves result
+router.post(
+  "/:id/matches/:matchId/result/approve",
+  requireAuth,
+  banCheck,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    const tournamentId = req.params["id"] as string;
+    const matchId = req.params["matchId"] as string;
+    const body = req.body as { adminNotes?: string };
+
+    const tournament = await prisma.tournament.findUnique({ where: { id: tournamentId } });
+    if (!tournament) {
+      res.status(404).json({ error: "Tournament not found" });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId! }, select: { isAdmin: true } });
+    if (tournament.organizerId !== userId && !user?.isAdmin) {
+      res.status(403).json({ error: "Only the tournament organizer or an admin can approve results" });
+      return;
+    }
+
+    const match = await prisma.tournamentMatch.findUnique({
+      where: { id: matchId },
+      select: { id: true, tournamentId: true, status: true, nextMatchId: true, team1Id: true, team2Id: true },
+    });
+    if (!match || match.tournamentId !== tournamentId) {
+      res.status(404).json({ error: "Match not found" });
+      return;
+    }
+
+    const pendingResult = await prisma.matchResult.findFirst({
+      where: { matchId, status: { in: ["pending_review", "disputed"] } },
+    });
+    if (!pendingResult) {
+      res.status(404).json({ error: "No pending result found for this match" });
+      return;
+    }
+
+    const prizePoolPaise = tournament.prizePoolPaise;
+
+    const [approvedResult] = await prisma.$transaction([
+      prisma.matchResult.update({
+        where: { id: pendingResult.id },
+        data: { status: "approved", reviewedBy: userId!, reviewedAt: new Date(), adminNotes: body.adminNotes ?? null },
+      }),
+      prisma.tournamentMatch.update({
+        where: { id: matchId },
+        data: { winnerId: pendingResult.winnerTeamId, status: MatchStatus.completed },
+      }),
+    ]);
+
+    // Advance winner to next match slot if bracket continues
+    if (match.nextMatchId) {
+      const nextMatch = await prisma.tournamentMatch.findUnique({ where: { id: match.nextMatchId } });
+      if (nextMatch) {
+        await prisma.tournamentMatch.update({
+          where: { id: match.nextMatchId },
+          data: nextMatch.team1Id ? { team2Id: pendingResult.winnerTeamId } : { team1Id: pendingResult.winnerTeamId },
+        });
+      }
+    }
+
+    // Notify all participants
+    const [team1Members, team2Members] = await Promise.all([
+      match.team1Id ? getTeamMemberIds(match.team1Id) : Promise.resolve([]),
+      match.team2Id ? getTeamMemberIds(match.team2Id) : Promise.resolve([]),
+    ]);
+
+    const prizeAmountStr = prizePoolPaise > 0 ? paiseToInr(prizePoolPaise) : undefined;
+
+    await Promise.allSettled([
+      ...team1Members.map((uid) =>
+        notifications
+          .matchResultApproved(uid, matchId, pendingResult.winnerTeamId === match.team1Id, prizeAmountStr)
+          .catch((err) => console.error("[notifications] matchResultApproved failed:", err)),
+      ),
+      ...team2Members.map((uid) =>
+        notifications
+          .matchResultApproved(uid, matchId, pendingResult.winnerTeamId === match.team2Id, prizeAmountStr)
+          .catch((err) => console.error("[notifications] matchResultApproved failed:", err)),
+      ),
+    ]);
+
+    res.json(approvedResult);
+  })
+);
+
+// POST /tournaments/:id/matches/:matchId/result/dispute — team member disputes result
+router.post(
+  "/:id/matches/:matchId/result/dispute",
+  requireAuth,
+  banCheck,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+    const tournamentId = req.params["id"] as string;
+    const matchId = req.params["matchId"] as string;
+
+    const match = await prisma.tournamentMatch.findUnique({
+      where: { id: matchId },
+      select: { id: true, tournamentId: true, team1Id: true, team2Id: true },
+    });
+    if (!match || match.tournamentId !== tournamentId) {
+      res.status(404).json({ error: "Match not found" });
+      return;
+    }
+
+    const [team1Members, team2Members] = await Promise.all([
+      match.team1Id ? getTeamMemberIds(match.team1Id) : Promise.resolve([]),
+      match.team2Id ? getTeamMemberIds(match.team2Id) : Promise.resolve([]),
+    ]);
+
+    const isParticipant = [...team1Members, ...team2Members].includes(userId!);
+    if (!isParticipant) {
+      res.status(403).json({ error: "You are not a participant in this match" });
+      return;
+    }
+
+    const pendingResult = await prisma.matchResult.findFirst({
+      where: { matchId, status: "pending_review" },
+    });
+    if (!pendingResult) {
+      res.status(404).json({ error: "No result pending review for this match" });
+      return;
+    }
+
+    const disputed = await prisma.matchResult.update({
+      where: { id: pendingResult.id },
+      data: { status: "disputed" },
+    });
+
+    // Notify all participants from both teams
+    await Promise.allSettled(
+      [...team1Members, ...team2Members].map((uid) =>
+        notifications
+          .matchResultDisputed(uid, matchId)
+          .catch((err) => console.error("[notifications] matchResultDisputed failed:", err)),
+      ),
+    );
+
+    res.json(disputed);
   })
 );
 
