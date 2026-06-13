@@ -468,7 +468,7 @@ router.post(
       return tx.tournamentRegistration.create({
         data: {
           tournamentId,
-          teamId: body.teamId,
+          teamId: team.id,
           registeredById: userId,
           entryFeePaise,
           walletTxId,
