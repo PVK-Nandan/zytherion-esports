@@ -10,7 +10,7 @@ import { distributePrizes } from "../services/prize-distribution";
 
 const router = Router();
 
-router.use(requireAuth, requireAdmin);
+router.use(requireAuth, asyncHandler(requireAdmin));
 
 function paiseToInr(paise: number): string {
   return (paise / 100).toFixed(2);
@@ -202,11 +202,11 @@ router.get(
     ]);
 
     const data = wallets.map((w) => {
-      const balancePaise = w.transactions.reduce(
+      const { transactions, ...rest } = w;
+      const balancePaise = transactions.reduce(
         (acc, tx) => (tx.type === "credit" ? acc + tx.amountPaise : acc - tx.amountPaise),
         0,
       );
-      const { transactions: _txs, ...rest } = w;
       return { ...rest, balancePaise, balanceInr: paiseToInr(balancePaise) };
     });
 

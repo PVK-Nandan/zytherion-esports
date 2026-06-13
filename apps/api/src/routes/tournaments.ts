@@ -29,14 +29,6 @@ function paiseToInr(paise: number): string {
   return (paise / 100).toFixed(2);
 }
 
-async function computeWalletBalance(walletId: string): Promise<number> {
-  const txs = await prisma.walletTransaction.findMany({
-    where: { walletId, status: "completed" },
-    select: { type: true, amountPaise: true },
-  });
-  return txs.reduce((acc, tx) => (tx.type === "credit" ? acc + tx.amountPaise : acc - tx.amountPaise), 0);
-}
-
 const tournamentPublicSelect = {
   id: true,
   title: true,
@@ -416,7 +408,7 @@ router.post(
 
       if (entryFeePaise > 0) {
         const wallet = await tx.wallet.findUnique({
-          where: { userId: userId! },
+          where: { userId },
           include: {
             transactions: {
               where: { status: "completed" },
@@ -467,7 +459,7 @@ router.post(
             refundTxId: null,
             entryFeePaise,
             walletTxId,
-            registeredById: userId!,
+            registeredById: userId,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },
         });
@@ -476,8 +468,8 @@ router.post(
       return tx.tournamentRegistration.create({
         data: {
           tournamentId,
-          teamId: body.teamId!,
-          registeredById: userId!,
+          teamId: body.teamId,
+          registeredById: userId,
           entryFeePaise,
           walletTxId,
         },
@@ -485,7 +477,7 @@ router.post(
       });
     });
 
-    notifications.tournamentRegistered(userId!, tournament.title, tournamentId).catch(
+    notifications.tournamentRegistered(userId, tournament.title, tournamentId).catch(
       (err) => console.error("[notifications] tournamentRegistered failed:", err),
     );
 
@@ -854,12 +846,10 @@ router.post(
     // Notify opposing team members that a result was submitted
     const submittingTeamId = team1MemberIds.includes(userId!) ? match.team1Id : match.team2Id;
     const opposingTeamId = submittingTeamId === match.team1Id ? match.team2Id : match.team1Id;
-    const opposingTeamName =
-      submittingTeamId === match.team1Id ? match.team2?.name ?? "opponent" : match.team1?.name ?? "opponent";
     const submittingTeamName =
       submittingTeamId === match.team1Id ? match.team1?.name ?? "your team" : match.team2?.name ?? "your team";
 
-    const opposingMemberIds = await getTeamMemberIds(opposingTeamId!);
+    const opposingMemberIds = await getTeamMemberIds(opposingTeamId);
     await Promise.allSettled(
       opposingMemberIds.map((uid) =>
         notifications.matchResultSubmitted(uid, matchId, submittingTeamName).catch(

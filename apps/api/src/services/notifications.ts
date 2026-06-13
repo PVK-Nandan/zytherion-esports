@@ -74,9 +74,11 @@ function buildEmailHtml(
   type: NotificationType,
   metadata: Record<string, unknown>,
 ): string {
+  const tournamentId = typeof metadata["tournamentId"] === "string" ? metadata["tournamentId"] : "";
+  const matchId = typeof metadata["matchId"] === "string" ? metadata["matchId"] : "";
   const ctaMap: Partial<Record<NotificationType, { label: string; path: string }>> = {
-    tournament_registration_confirmed: { label: "View Tournament", path: `/tournaments/${metadata["tournamentId"] ?? ""}` },
-    match_result_approved: { label: "View Match", path: `/matches/${metadata["matchId"] ?? ""}` },
+    tournament_registration_confirmed: { label: "View Tournament", path: `/tournaments/${tournamentId}` },
+    match_result_approved: { label: "View Match", path: `/matches/${matchId}` },
     wallet_deposit_completed: { label: "View Wallet", path: "/wallet" },
     wallet_withdrawal_completed: { label: "View Wallet", path: "/wallet" },
     wallet_withdrawal_failed: { label: "View Wallet", path: "/wallet" },

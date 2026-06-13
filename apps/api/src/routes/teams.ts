@@ -293,7 +293,7 @@ router.post(
 
     const expiresAt = new Date(Date.now() + INVITATION_TTL_HOURS * 60 * 60 * 1000);
     const invitation = await prisma.teamInvitation.create({
-      data: { teamId, invitedId: invitee.id, invitedBy: userId!, status: "pending", expiresAt },
+      data: { teamId, invitedId: invitee.id, invitedBy: userId, status: "pending", expiresAt },
       select: {
         id: true,
         teamId: true,

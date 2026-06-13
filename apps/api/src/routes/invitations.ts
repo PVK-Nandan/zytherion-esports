@@ -58,7 +58,7 @@ router.post(
     try {
       await prisma.$transaction([
         prisma.teamInvitation.update({ where: { id: invitationId }, data: { status: "accepted" } }),
-        prisma.teamMember.create({ data: { teamId: team.id, userId: userId! } }),
+        prisma.teamMember.create({ data: { teamId: team.id, userId } }),
       ]);
     } catch (err: unknown) {
       if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "P2002") {

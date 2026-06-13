@@ -14,7 +14,7 @@ const router = Router();
 router.patch(
   "/:id/review",
   requireAuth,
-  requireAdmin,
+  asyncHandler(requireAdmin),
   asyncHandler(async (req: Request, res: Response) => {
     const { userId } = getAuth(req);
     const resultId = req.params["id"] as string;
