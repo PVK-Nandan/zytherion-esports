@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { ClerkProvider, SignedIn, UserButton } from "@clerk/nextjs";
-import { InvitationBadge } from "@/components/teams/InvitationBadge";
-import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { ClerkProvider } from "@clerk/nextjs";
+import { HeaderAuth } from "@/components/HeaderAuth";
 import Link from "next/link";
 import "./globals.css";
 
@@ -25,11 +24,7 @@ export default function RootLayout({
                 Zytherion
               </Link>
               <nav className="flex items-center gap-1">
-                <SignedIn>
-                  <NotificationBell />
-                  <InvitationBadge />
-                  <UserButton afterSignOutUrl="/" />
-                </SignedIn>
+                <HeaderAuth />
               </nav>
             </div>
           </header>
