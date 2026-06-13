@@ -32,6 +32,7 @@ model User {
   reviewedResults      MatchResult[]         @relation("ReviewedBy")
   uploadedScreenshots  MatchScreenshot[]
   notifications        Notification[]
+  adminAuditLogs       AdminAuditLog[]
 
   @@map("users")
 }
@@ -398,4 +399,17 @@ enum TransactionStatus {
   reversed
 
   @@map("transaction_status")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(uuid())
+  adminId    String   @map("admin_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  admin User @relation(fields: [adminId], references: [id])
+
+  @@map("admin_audit_logs")
 }

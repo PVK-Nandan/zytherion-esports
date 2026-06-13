@@ -9,6 +9,7 @@ import tournamentsRouter from "./routes/tournaments";
 import notificationsRouter from "./routes/notifications";
 import webhooksRazorpayRouter from "./routes/webhooks";
 import webhooksClerkRouter from "./routes/clerks";
+import adminRouter from "./routes/admin";
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
@@ -43,6 +44,7 @@ app.use("/tournaments", tournamentsRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/webhooks", webhooksRazorpayRouter);
 app.use("/webhooks", webhooksClerkRouter);
+app.use("/admin", adminRouter);
 
 // Global error handler
 app.use(
