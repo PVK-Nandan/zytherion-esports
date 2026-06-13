@@ -22,11 +22,12 @@ app.use(morgan("dev"));
 // Webhook routes need the raw body for svix signature verification
 app.use("/webhooks", express.raw({ type: "application/json" }));
 app.use(express.json());
-app.use(clerkAuth);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+app.use(clerkAuth);
 
 app.use("/webhooks", webhookRouter);
 app.use("/users", userRouter);
