@@ -41,6 +41,36 @@ router.get(
   })
 );
 
+// GET /users/me/invitations — list pending invitations for the authenticated user
+router.get(
+  "/me/invitations",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = getAuth(req);
+
+    // Expire any stale pending invitations before returning
+    await prisma.teamInvitation.updateMany({
+      where: { invitedId: userId!, status: "pending", expiresAt: { lt: new Date() } },
+      data: { status: "expired" },
+    });
+
+    const invitations = await prisma.teamInvitation.findMany({
+      where: { invitedId: userId!, status: "pending" },
+      select: {
+        id: true,
+        status: true,
+        expiresAt: true,
+        createdAt: true,
+        team: { select: { id: true, name: true, slug: true, logoUrl: true } },
+        inviter: { select: { username: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json(invitations);
+  })
+);
+
 // PATCH /users/me/profile — update own profile (auth + ban required)
 router.patch(
   "/me/profile",
