@@ -8,7 +8,13 @@ interface Props {
   onKick?: ((userId: string, username: string) => void) | undefined;
 }
 
-export function TeamRoster({ members, ownerId, currentUserId, isOwner, onKick }: Props) {
+export function TeamRoster({
+  members,
+  ownerId,
+  currentUserId: _currentUserId,
+  isOwner,
+  onKick,
+}: Props) {
   return (
     <ul className="divide-y divide-white/5">
       {members.map((member) => (
@@ -26,12 +32,17 @@ export function TeamRoster({ members, ownerId, currentUserId, isOwner, onKick }:
               </div>
             )}
           </div>
+
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">{member.username}</p>
+            <p className="text-sm font-medium text-white truncate">
+              {member.username}
+            </p>
+
             {member.userId === ownerId && (
               <p className="text-xs text-orange-400">Owner</p>
             )}
           </div>
+
           {isOwner && member.userId !== ownerId && onKick && (
             <button
               onClick={() => onKick(member.userId, member.username)}

@@ -1,7 +1,6 @@
 "use client";
 
 import { useAuth, useUser } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { getTeamBySlug, updateTeam, kickMember, invitePlayer } from "@/lib/teams";
 import { TeamRoster } from "@/components/teams/TeamRoster";
@@ -12,7 +11,6 @@ interface Props {
 }
 
 export default function ManageTeamPage({ params }: Props) {
-  const router = useRouter();
   const { getToken, isSignedIn } = useAuth();
   const { user } = useUser();
   const [team, setTeam] = useState<TeamWithRoster | null>(null);
@@ -47,7 +45,7 @@ export default function ManageTeamPage({ params }: Props) {
   }, [params.slug]);
 
   useEffect(() => {
-    loadTeam();
+    void loadTeam();
   }, [loadTeam]);
 
   const currentUserId = user?.id;
@@ -98,8 +96,10 @@ export default function ManageTeamPage({ params }: Props) {
         ...(editLogoUrl.trim() ? { logoUrl: editLogoUrl.trim() } : {}),
       }, token);
       setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 2500);
-      loadTeam();
+      setTimeout(() => {
+        setSaveSuccess(false);
+      }, 2500);
+      void loadTeam();
     } catch {
       setError("Failed to save changes");
     } finally {
@@ -114,7 +114,7 @@ export default function ManageTeamPage({ params }: Props) {
       const token = await getToken();
       if (!token) return;
       await kickMember(team.id, userId, token);
-      loadTeam();
+      void loadTeam();
     } catch {
       setError(`Failed to remove ${username}`);
     }
@@ -162,7 +162,12 @@ export default function ManageTeamPage({ params }: Props) {
         {/* Edit details */}
         <section className="bg-white/5 rounded-xl border border-white/10 p-5">
           <h2 className="text-sm font-semibold mb-4">Team details</h2>
-          <form onSubmit={handleSave} className="space-y-4">
+          <form
+  onSubmit={(e) => {
+    void handleSave(e);
+  }}
+  className="space-y-4"
+>
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">Team name</label>
               <input
@@ -212,7 +217,12 @@ export default function ManageTeamPage({ params }: Props) {
           <p className="text-xs text-gray-500 mb-4">
             {team.memberCount}/{team.maxMembers} members — invite by username
           </p>
-          <form onSubmit={handleInvite} className="flex gap-2">
+          <form
+            onSubmit={(e) => {
+              void handleInvite(e);
+            }}
+            className="flex gap-2"
+          >
             <input
               type="text"
               value={inviteUsername}
@@ -244,7 +254,9 @@ export default function ManageTeamPage({ params }: Props) {
               ownerId={team.ownerId}
               currentUserId={currentUserId}
               isOwner={isOwner}
-              onKick={handleKick}
+              onKick={(userId, username) => {
+                void handleKick(userId, username);
+            }}
             />
           </div>
         </section>
