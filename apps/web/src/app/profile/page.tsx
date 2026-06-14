@@ -59,7 +59,7 @@ export default function ProfilePage() {
           .then((d: { profile?: UserProfile }) => d.profile ?? null),
         apiRequest<Invitation[]>("/users/me/invitations", { token }),
       ]);
-      setProfile(profileData as UserProfile | null);
+      setProfile(profileData);
       setInvitations(invData);
       if (profileData) {
         setIgn(profileData.bgmiIgn ?? "");

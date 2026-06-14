@@ -129,7 +129,7 @@ export default function NotificationsPage() {
         <div className="space-y-3">
           <AnimatePresence>
             {notifications.map((n, i) => (
-              <NotificationCard key={n.id} notification={n} onRead={markRead} index={i} />
+              <NotificationCard key={n.id} notification={n} onRead={(id) => { void markRead(id); }} index={i} />
             ))}
           </AnimatePresence>
         </div>
