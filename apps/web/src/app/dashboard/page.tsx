@@ -16,7 +16,8 @@ async function fetchTournaments(status?: string): Promise<Tournament[]> {
   try {
     const res = await fetch(url, { next: { revalidate: 30 } });
     if (!res.ok) return [];
-    const json: TournamentsResponse = await res.json();
+    const data: unknown = await res.json();
+    const json = data as TournamentsResponse;
     return json.data ?? [];
   } catch {
     return [];
